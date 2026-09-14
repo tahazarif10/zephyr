@@ -244,6 +244,10 @@ static void cleanup_secondary_identities(void)
 		if (err == -EALREADY) {
 			bt_addr_le_t addr = test_addr((uint8_t)(0x80U + id));
 
+			/* Deleting the last identity shrinks the identity count, but an empty
+			 * slot below it remains counted. Reclaim the slot before deleting it
+			 * so cleanup can return to the default identity only.
+			 */
 			err = bt_id_reset(id, &addr, NULL);
 			zassert_equal(err, id, "Failed to restore empty identity %u", id);
 			err = bt_id_delete(id);
@@ -281,6 +285,40 @@ static void id_after(void *fixture)
 
 ZTEST_SUITE(bt_id_public_api, NULL, id_setup, id_before, id_after, NULL);
 
+ZTEST(bt_id_public_api, test_create_generated_addresses)
+{
+	bt_addr_le_t generated_addr = *BT_ADDR_LE_ANY;
+	bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
+	size_t count = ARRAY_SIZE(addrs);
+	int id1;
+	int id2;
+
+	id1 = bt_id_create(NULL, NULL);
+	zassert_equal(id1, 1, "Generated identity got id %d", id1);
+
+	id2 = bt_id_create(&generated_addr, NULL);
+	zassert_equal(id2, 2, "Generated identity with output address got id %d", id2);
+	zassert_equal(generated_addr.type, BT_ADDR_LE_RANDOM,
+		      "Generated identity address is not random");
+	zassert_true(BT_ADDR_IS_STATIC(&generated_addr.a),
+		     "Generated identity address is not static random");
+
+	bt_id_get(addrs, &count);
+	zassert_equal(count, 3U, "Unexpected identity count after generated identities");
+	zassert_equal(addrs[id1].type, BT_ADDR_LE_RANDOM,
+		      "NULL-address identity is not random");
+	zassert_true(BT_ADDR_IS_STATIC(&addrs[id1].a),
+		     "NULL-address identity is not static random");
+	zassert_mem_equal(&addrs[id2], &generated_addr, sizeof(generated_addr),
+			  "Generated address was not copied back to the caller");
+	zassert_false(bt_addr_le_eq(&addrs[BT_ID_DEFAULT], &addrs[id1]),
+		      "Generated identity duplicates the default identity");
+	zassert_false(bt_addr_le_eq(&addrs[BT_ID_DEFAULT], &addrs[id2]),
+		      "Generated identity duplicates the default identity");
+	zassert_false(bt_addr_le_eq(&addrs[id1], &addrs[id2]),
+		      "Generated identities have duplicate addresses");
+}
+
 ZTEST(bt_id_public_api, test_create_errors_and_capacity)
 {
 	bt_addr_le_t invalid_addr = test_addr(1U);
@@ -288,12 +326,16 @@ ZTEST(bt_id_public_api, test_create_errors_and_capacity)
 	bt_addr_le_t addr2 = test_addr(3U);
 	bt_addr_le_t addr3 = test_addr(4U);
 	bt_addr_le_t addr4 = test_addr(5U);
+	bt_addr_le_t public_addr = test_addr(6U);
 	uint8_t irk[16] = {1U};
 	int id;
 
 	invalid_addr.a.val[5] = 0x40U;
+	public_addr.type = BT_ADDR_LE_PUBLIC;
 	zassert_equal(bt_id_create(&invalid_addr, NULL), -EINVAL,
 		      "Non-static random identity address was accepted");
+	zassert_equal(bt_id_create(&public_addr, NULL), -EINVAL,
+		      "Public identity address was accepted without controller support");
 	zassert_equal(bt_id_create(&addr1, irk), -EINVAL,
 		      "IRK was accepted while privacy is disabled");
 
@@ -321,6 +363,7 @@ ZTEST(bt_id_public_api, test_reset_errors_and_updates_identity)
 	bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
 	uint8_t irk[16] = {1U};
 	size_t count = ARRAY_SIZE(addrs);
+	uint8_t first_unused_id;
 	int id1;
 	int id2;
 
@@ -328,6 +371,7 @@ ZTEST(bt_id_public_api, test_reset_errors_and_updates_identity)
 	id2 = bt_id_create(&addr2, NULL);
 	zassert_equal(id1, 1, "Unexpected first secondary identity id");
 	zassert_equal(id2, 2, "Unexpected second secondary identity id");
+	first_unused_id = (uint8_t)identity_count();
 
 	invalid_addr.a.val[5] = 0x40U;
 	zassert_equal(bt_id_reset((uint8_t)id1, &invalid_addr, NULL), -EINVAL,
@@ -336,8 +380,8 @@ ZTEST(bt_id_public_api, test_reset_errors_and_updates_identity)
 		      "IRK was accepted while privacy is disabled");
 	zassert_equal(bt_id_reset(BT_ID_DEFAULT, &addr3, NULL), -EINVAL,
 		      "Default identity was reset");
-	zassert_equal(bt_id_reset(CONFIG_BT_ID_MAX, &addr3, NULL), -EINVAL,
-		      "Out-of-range identity was reset");
+	zassert_equal(bt_id_reset(first_unused_id, &addr3, NULL), -EINVAL,
+		      "First unused identity handle was reset");
 	zassert_equal(bt_id_reset((uint8_t)id1, &addr2, NULL), -EALREADY,
 		      "Identity was reset to an address already in use");
 
@@ -352,6 +396,10 @@ ZTEST(bt_id_public_api, test_delete_errors_and_empty_slot)
 {
 	bt_addr_le_t addr1 = test_addr(2U);
 	bt_addr_le_t addr2 = test_addr(3U);
+	bt_addr_le_t addr3 = test_addr(4U);
+	bt_addr_le_t addrs[CONFIG_BT_ID_MAX];
+	size_t count = ARRAY_SIZE(addrs);
+	uint8_t first_unused_id;
 	int id1;
 	int id2;
 
@@ -359,16 +407,25 @@ ZTEST(bt_id_public_api, test_delete_errors_and_empty_slot)
 	id2 = bt_id_create(&addr2, NULL);
 	zassert_equal(id1, 1, "Unexpected first secondary identity id");
 	zassert_equal(id2, 2, "Unexpected second secondary identity id");
+	first_unused_id = (uint8_t)identity_count();
 
 	zassert_equal(bt_id_delete(BT_ID_DEFAULT), -EINVAL, "Default identity was deleted");
-	zassert_equal(bt_id_delete(CONFIG_BT_ID_MAX), -EINVAL,
-		      "Out-of-range identity was deleted");
+	zassert_equal(bt_id_delete(first_unused_id), -EINVAL,
+		      "First unused identity handle was deleted");
 
 	zassert_ok(bt_id_delete((uint8_t)id1), "Failed to delete non-tail identity");
-	zassert_equal(identity_count(), 3U, "Deleting a non-tail identity changed id_count");
+	zassert_equal(identity_count(), 3U, "Deleting a non-tail identity changed identity count");
 	zassert_equal(bt_id_delete((uint8_t)id1), -EALREADY,
 		      "Deleting an empty identity slot did not return -EALREADY");
 
+	zassert_equal(bt_id_reset((uint8_t)id1, &addr3, NULL), id1,
+		      "Failed to reclaim deleted identity slot");
+	bt_id_get(addrs, &count);
+	zassert_equal(count, 3U, "Reclaiming an identity changed identity count");
+	zassert_mem_equal(&addrs[id1], &addr3, sizeof(addr3),
+			  "Reclaimed identity address was not updated");
+
 	zassert_ok(bt_id_delete((uint8_t)id2), "Failed to delete tail identity");
-	zassert_equal(identity_count(), 2U, "Deleting the tail identity did not shrink id_count");
+	zassert_equal(identity_count(), 2U,
+		      "Deleting the tail identity did not shrink identity count");
 }
