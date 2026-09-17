@@ -1,0 +1,76 @@
+name: Host ID OOB focused check
+
+on:
+  push:
+    branches:
+      - tests/bluetooth-host-oob-invalid-id-validation
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          path: zephyr
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: '3.12'
+
+      - name: Install native_sim host dependencies
+        run: sudo apt-get update && sudo apt-get install -y gcc-multilib
+
+      - name: Set up Zephyr workspace
+        uses: zephyrproject-rtos/action-zephyr-setup@be8136a8bba01580485d98b7ad2d32477c36a49a # v1.0.15
+        with:
+          app-path: zephyr
+          toolchains: arm-zephyr-eabi
+          enable-ccache: false
+
+      - name: Run regression on current code
+        id: regression
+        continue-on-error: true
+        run: >-
+          west twister -T zephyr/tests/bluetooth/host_id
+          -p native_sim -p native_sim/native/64
+          --inline-logs -v
+
+      - name: Require regression failure
+        if: always()
+        run: |
+          if [ "${{ steps.regression.outcome }}" != "failure" ]; then
+            echo "Expected the regression test to fail on current code"
+            exit 1
+          fi
+
+      - name: Apply candidate fix in workspace
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path("zephyr/subsys/bluetooth/host/id.c")
+          text = path.read_text()
+          old = "\tif (id >= CONFIG_BT_ID_MAX) {\n\t\treturn -EINVAL;\n\t}"
+          new = (
+              "\tif (id >= bt_dev.id_count ||\n"
+              "\t    bt_addr_le_eq(&bt_dev.id_addr[id], BT_ADDR_LE_ANY)) {\n"
+              "\t\treturn -EINVAL;\n"
+              "\t}"
+          )
+          if old not in text:
+              raise SystemExit("target validation block not found")
+          path.write_text(text.replace(old, new, 1))
+          PY
+
+      - name: Run regression with candidate fix
+        run: |
+          rm -rf twister-out
+          west twister -T zephyr/tests/bluetooth/host_id \
+            -p native_sim -p native_sim/native/64 \
+            --inline-logs -v
