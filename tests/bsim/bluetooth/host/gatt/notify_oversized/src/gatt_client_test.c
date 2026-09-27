@@ -301,10 +301,50 @@ static void test_main(void)
 	TEST_PASS_AND_EXIT("GATT client passed");
 }
 
+static void test_notify_mult_fallback(void)
+{
+	int err;
+
+	err = bt_enable(NULL);
+	TEST_ASSERT(err == 0, "Bluetooth init failed (err %d)", err);
+
+	err = bt_le_scan_start(BT_LE_SCAN_PASSIVE, device_found);
+	TEST_ASSERT(err == 0, "Scanning failed to start (err %d)", err);
+
+	WAIT_FOR_FLAG(flag_is_connected);
+	TEST_ASSERT(bt_gatt_get_mtu(g_conn) == 23U, "Unexpected ATT MTU %u",
+		    bt_gatt_get_mtu(g_conn));
+
+	discover();
+	write_csf();
+
+	subscribe(&sub_params_a, chrc_a_handle);
+	subscribe(&sub_params_b, chrc_b_handle);
+	WAIT_FOR_FLAG(flag_a_subscribed);
+	WAIT_FOR_FLAG(flag_b_subscribed);
+
+	WAIT_FOR_FLAG(flag_marker_received);
+
+	TEST_ASSERT(num_received == 2U, "Received %zu notifications, expected 2", num_received);
+	TEST_ASSERT(received[0].handle == chrc_a_handle &&
+			    received[0].len == NOTIFY_FALLBACK_LEN,
+		    "First notification: handle 0x%04x len %u", received[0].handle,
+		    received[0].len);
+	TEST_ASSERT(received[1].handle == chrc_b_handle && received[1].len == MARKER_LEN,
+		    "Second notification: handle 0x%04x len %u", received[1].handle,
+		    received[1].len);
+
+	TEST_PASS_AND_EXIT("GATT client passed");
+}
+
 static const struct bst_test_instance test_gatt_client[] = {
 	{
 		.test_id = "gatt_client",
 		.test_main_f = test_main,
+	},
+	{
+		.test_id = "gatt_client_notify_mult_fallback",
+		.test_main_f = test_notify_mult_fallback,
 	},
 	BSTEST_END_MARKER,
 };

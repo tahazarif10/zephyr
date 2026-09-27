@@ -123,6 +123,22 @@ static void notify(const struct bt_gatt_attr *attr, uint16_t len)
 	TEST_ASSERT(err == 0, "Failed to send %u byte notification (err %d)", len, err);
 }
 
+static void notify_once(const struct bt_gatt_attr *attr, uint16_t len)
+{
+	struct bt_gatt_notify_params params = {
+		.attr = attr,
+		.data = test_data,
+		.len = len,
+		.func = notify_sent,
+	};
+	int err;
+
+	UNSET_FLAG(flag_sent);
+
+	err = bt_gatt_notify_cb(g_conn, &params);
+	TEST_ASSERT(err == 0, "Failed to send %u byte notification (err %d)", len, err);
+}
+
 static void indicate_cb(struct bt_conn *conn, struct bt_gatt_indicate_params *params, uint8_t err)
 {
 	TEST_ASSERT(err == 0, "%u byte indication failed (err %u)", params->len, err);
@@ -212,10 +228,50 @@ static void test_main(void)
 	TEST_PASS("GATT server passed");
 }
 
+static void test_notify_mult_fallback(void)
+{
+	const struct bt_data ad[] = {
+		BT_DATA_BYTES(BT_DATA_FLAGS, (BT_LE_AD_GENERAL | BT_LE_AD_NO_BREDR)),
+	};
+	const struct bt_gatt_attr *attr_a;
+	const struct bt_gatt_attr *attr_b;
+	int err;
+
+	ARRAY_FOR_EACH(test_data, i) {
+		test_data[i] = (uint8_t)i;
+	}
+
+	err = bt_enable(NULL);
+	TEST_ASSERT(err == 0, "Bluetooth init failed (err %d)", err);
+
+	err = bt_le_adv_start(BT_LE_ADV_CONN_FAST_1, ad, ARRAY_SIZE(ad), NULL, 0);
+	TEST_ASSERT(err == 0, "Advertising failed to start (err %d)", err);
+
+	WAIT_FOR_FLAG(flag_is_connected);
+	WAIT_FOR_FLAG(flag_a_subscribed);
+	WAIT_FOR_FLAG(flag_b_subscribed);
+
+	attr_a = bt_gatt_find_by_uuid(NULL, 0, TEST_CHRC_A_UUID);
+	attr_b = bt_gatt_find_by_uuid(NULL, 0, TEST_CHRC_B_UUID);
+	TEST_ASSERT(attr_a != NULL && attr_b != NULL, "Test characteristics not found");
+
+	notify_once(attr_a, NOTIFY_FALLBACK_LEN);
+	WAIT_FOR_FLAG(flag_sent);
+
+	notify_once(attr_b, MARKER_LEN);
+	WAIT_FOR_FLAG(flag_sent);
+
+	TEST_PASS("GATT server passed");
+}
+
 static const struct bst_test_instance test_gatt_server[] = {
 	{
 		.test_id = "gatt_server",
 		.test_main_f = test_main,
+	},
+	{
+		.test_id = "gatt_server_notify_mult_fallback",
+		.test_main_f = test_notify_mult_fallback,
 	},
 	BSTEST_END_MARKER,
 };

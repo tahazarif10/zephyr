@@ -2593,7 +2593,23 @@ static int gatt_notify(struct bt_conn *conn, uint16_t handle,
 
 #if defined(CONFIG_BT_GATT_NOTIFY_MULTIPLE) && (CONFIG_BT_GATT_NOTIFY_MULTIPLE_FLUSH_MS != 0)
 	if (gatt_cf_notify_multi(conn)) {
-		return gatt_notify_mult(conn, handle, params);
+		const size_t mult_len =
+			sizeof(struct bt_att_hdr) + sizeof(struct bt_att_notify_mult) + params->len;
+		const size_t single_len = sizeof(struct bt_att_hdr) + sizeof(*nfy) + params->len;
+		int err;
+
+		if (bt_att_chan_opt_mtu_fits(conn, BT_ATT_CHAN_OPT(params), mult_len)) {
+			return gatt_notify_mult(conn, handle, params);
+		}
+
+		if (!bt_att_chan_opt_mtu_fits(conn, BT_ATT_CHAN_OPT(params), single_len)) {
+			return -ENOMEM;
+		}
+
+		err = gatt_notify_flush(conn);
+		if (err < 0) {
+			return err;
+		}
 	}
 #endif /* CONFIG_BT_GATT_NOTIFY_MULTIPLE */
 

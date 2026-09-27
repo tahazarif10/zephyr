@@ -3984,6 +3984,25 @@ uint16_t bt_att_get_uatt_mtu(struct bt_conn *conn)
 	return 0;
 }
 
+bool bt_att_chan_opt_mtu_fits(struct bt_conn *conn, enum bt_att_chan_opt chan_opt, size_t len)
+{
+	struct bt_att_chan *chan, *tmp;
+	struct bt_att *att;
+
+	att = att_get(conn);
+	if (!att) {
+		return false;
+	}
+
+	SYS_SLIST_FOR_EACH_CONTAINER_SAFE(&att->chans, chan, tmp, node) {
+		if (att_chan_matches_chan_opt(chan, chan_opt) && len <= bt_att_mtu(chan)) {
+			return true;
+		}
+	}
+
+	return false;
+}
+
 static void att_chan_mtu_updated(struct bt_att_chan *updated_chan)
 {
 	struct bt_att *att = updated_chan->att;

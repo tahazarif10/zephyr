@@ -29,6 +29,9 @@
 #define SHORT_LEN     10
 #define MARKER_LEN    1
 
+/* Default ATT MTU (23) minus the 3-octet Handle Value Notification header. */
+#define NOTIFY_FALLBACK_LEN 20
+
 /* Multiple Handle Value Notification carrying a short and an oversized value */
 #define REQUIRED_ATT_MTU (1 + 4 + SHORT_LEN + 4 + OVERSIZED_LEN)
 
