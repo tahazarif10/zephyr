@@ -26,6 +26,7 @@ DEFINE_FLAG_STATIC(flag_discover_complete);
 DEFINE_FLAG_STATIC(flag_write_complete);
 DEFINE_FLAG_STATIC(flag_subscribed_short);
 DEFINE_FLAG_STATIC(flag_subscribed_long);
+DEFINE_FLAG_STATIC(flag_max_notification_received);
 
 static struct bt_conn *g_conn;
 static uint16_t chrc_handle;
@@ -224,6 +225,10 @@ uint8_t test_notify(struct bt_conn *conn, struct bt_gatt_subscribe_params *param
 {
 	printk("Received notification #%u with length %d\n", num_notifications++, length);
 
+	if (length == bt_gatt_get_mtu(conn) - 3) {
+		SET_FLAG(flag_max_notification_received);
+	}
+
 	return BT_GATT_ITER_CONTINUE;
 }
 
@@ -351,6 +356,8 @@ static void test_main(void)
 	while (num_notifications < NOTIFICATION_COUNT) {
 		k_sleep(K_MSEC(100));
 	}
+
+	WAIT_FOR_FLAG(flag_max_notification_received);
 
 	subscribe(&sub_params_short, false);
 	subscribe(&sub_params_long, false);

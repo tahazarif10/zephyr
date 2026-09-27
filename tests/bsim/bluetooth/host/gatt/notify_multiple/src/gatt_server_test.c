@@ -10,6 +10,7 @@
 #include <stddef.h>
 #include <errno.h>
 
+#include <zephyr/bluetooth/att.h>
 #include <zephyr/bluetooth/bluetooth.h>
 #include <zephyr/bluetooth/hci.h>
 #include <zephyr/bluetooth/conn.h>
@@ -23,12 +24,14 @@
 DEFINE_FLAG_STATIC(flag_is_connected);
 DEFINE_FLAG_STATIC(flag_short_subscribe);
 DEFINE_FLAG_STATIC(flag_long_subscribe);
+DEFINE_FLAG_STATIC(flag_max_notification_sent);
 
 static struct bt_conn *g_conn;
 
 #define ARRAY_ITEM(i, _) i
 const uint8_t chrc_data[] = { LISTIFY(CHRC_SIZE, ARRAY_ITEM, (,)) }; /* 1, 2, 3 ... */
 const uint8_t long_chrc_data[] = { LISTIFY(LONG_CHRC_SIZE, ARRAY_ITEM, (,)) }; /* 1, 2, 3 ... */
+static uint8_t max_chrc_data[BT_ATT_MAX_ATTRIBUTE_LEN];
 
 static void connected(struct bt_conn *conn, uint8_t err)
 {
@@ -99,6 +102,31 @@ static volatile size_t num_notifications_sent;
 static void notification_sent(struct bt_conn *conn, void *user_data)
 {
 	printk("Sent notification #%u\n", num_notifications_sent++);
+}
+
+static void max_notification_sent(struct bt_conn *conn, void *user_data)
+{
+	SET_FLAG(flag_max_notification_sent);
+}
+
+static void max_single_notify(const struct bt_gatt_attr *attr)
+{
+	uint16_t len = bt_gatt_get_mtu(g_conn) - 3;
+	struct bt_gatt_notify_params params = {
+		.attr = attr,
+		.data = max_chrc_data,
+		.len = len,
+		.func = max_notification_sent,
+	};
+	int err;
+
+	TEST_ASSERT(len > LONG_CHRC_SIZE && len <= sizeof(max_chrc_data),
+		    "Unexpected max notification length %u", len);
+
+	err = bt_gatt_notify_cb(g_conn, &params);
+	TEST_ASSERT(err == 0, "Max-sized single notification failed (err %d)", err);
+
+	WAIT_FOR_FLAG(flag_max_notification_sent);
 }
 
 static inline void multiple_notify(const struct bt_gatt_attr *attrs[2])
@@ -178,6 +206,8 @@ static void test_main(void)
 	if (num_notifications_sent != NOTIFICATION_COUNT) {
 		TEST_FAIL("Unexpected notification callback value");
 	}
+
+	max_single_notify(attrs[0]);
 
 	TEST_PASS("GATT server passed");
 }

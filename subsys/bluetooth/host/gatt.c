@@ -2592,7 +2592,11 @@ static int gatt_notify(struct bt_conn *conn, uint16_t handle,
 	}
 
 #if defined(CONFIG_BT_GATT_NOTIFY_MULTIPLE) && (CONFIG_BT_GATT_NOTIFY_MULTIPLE_FLUSH_MS != 0)
-	if (gatt_cf_notify_multi(conn)) {
+	/* A single notification has two fewer octets of framing than a
+	 * multiple notification tuple. Fall back when only the single form fits.
+	 */
+	if (gatt_cf_notify_multi(conn) &&
+	    bt_att_get_mtu(conn) >= (sizeof(struct bt_att_notify_mult) + params->len)) {
 		return gatt_notify_mult(conn, handle, params);
 	}
 #endif /* CONFIG_BT_GATT_NOTIFY_MULTIPLE */
